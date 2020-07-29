@@ -1,4 +1,4 @@
-import os   # Only necessary for os.getenv() for local testing
+import os   # Only used when local testing for getting secrets via os.getenv()
 import re
 import requests
 
@@ -12,12 +12,13 @@ except NameError:
     input_data = {
         "FRESHSERVICE_API_KEY" : os.getenv("FRESHSERVICE_API_KEY"),
         "SLACK_HALP_TOKEN" : os.getenv("SLACK_HALP_TOKEN"),
-        "display_or_real_name" : "Tom Spis [Halp]"   # Define Slack name to look up
+        "display_or_real_name" : "Tom Spis"   # Define Slack name to look up
     }
 
 # Slack names to try for testing
 #   "Tom SpisTester"
 #   "TomSpace"
+#   "Tom Spis [Halp]"
 #   "Joel he/him/his"
 
 # Initialize constants
