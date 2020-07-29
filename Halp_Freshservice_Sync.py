@@ -268,7 +268,7 @@ if requester_exists:
         if "tophatmonocle.com" in email_to_update:
             email_to_update = [email_to_update.replace("tophatmonocle.com", 
                                                        "tophat.com")]
-        elif "bluedoorpublishing.com" in slack_email:
+        elif "bluedoorpublishing.com" in email_to_update:
             email_to_update = [email_to_update.replace("bluedoorpublishing.com", 
                                                        "bluedoorcloud.com")]     
     else:
