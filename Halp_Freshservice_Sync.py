@@ -12,7 +12,9 @@ except NameError:
     input_data = {
         "FRESHSERVICE_API_KEY" : os.getenv("FRESHSERVICE_API_KEY"),
         "SLACK_HALP_TOKEN" : os.getenv("SLACK_HALP_TOKEN"),
-        "display_or_real_name" : "Tom Spis"   # Define Slack name to look up
+        "DISPLAY_OR_REAL_NAME" : "Tom SpisTesty",   # Define Slack name to look up
+        "HALP_REQUESTER" : "Nick Corradino",   # Define stored reuquester name 
+        "TICKET_ID" : "INC-9999",   # Define Freshservice ticket ID 
     }
 
 # Slack names to try for testing
@@ -20,12 +22,15 @@ except NameError:
 #   "TomSpace"
 #   "Tom Spis [Halp]"
 #   "Joel he/him/his"
+#   "Nick Corradino"
 
 # Initialize constants
 
 HALP_EMAIL = "top-hat@inbound.halp-mail.com"   # Set to your Halp inbound email 
 FRESHSERVICE_HOSTNAME = "tophat.freshservice.com"   # Set to your Freshservice
 REQUESTERS_URL = "https://" + FRESHSERVICE_HOSTNAME + "/api/v2/requesters"
+TICKETS_URL = "https://" + FRESHSERVICE_HOSTNAME + "/api/v2/tickets"
+IS_REPLY = True if "HALP_REQUESTER" in input_data else False
 DEBUG = True   # Enables debug logging via print()
 DEBUG_DEEP = True   # Enables deeper debug logging in get_requesters()
 
@@ -46,20 +51,41 @@ def lookup_email_from_slack(input_data):
         user["profile"]["email"] (str): Slack user's email address
     """
 
+    
+    # Attempt to detect & associate replies with replier - worked in testing
+    # but doesn't work in reality, as my analysis of where that data was coming
+    # from was incorrect. Freshservice will always pass the name of the ORIGINAL
+    # Freshservice requester (not to be confused with original Halp requester),
+    # so the correct place to get Slack name for processing for replies is from
+    # get_requester(HALP_EMAIL).
+    #
+    # The the processing logic here is correct it's just that the real Slack
+    # name from replies doesn't actually come via input_data["DISPLAY_OR_REAL_NAME"],
+    # so this processing code will definitely need to be refactored (and likely
+    # moved elsewhere).
+
+    FRESHSERVICE_AGENT_SLACKNAMES = ["TomSpace"]
+
+    if input_data["DISPLAY_OR_REAL_NAME"] in FRESHSERVICE_AGENT_SLACKNAMES:
+        slack_name = input_data["DISPLAY_OR_REAL_NAME"]
+    elif IS_REPLY:
+        slack_name = input_data["HALP_REQUESTER"]
+    else:
+        slack_name = input_data["DISPLAY_OR_REAL_NAME"]
+    
     # Restore Freshservice-ommitted parentheses to Slack display names 
     # which originally contained them (edge case processing)
 
     edge_case_name_remap = {
-        "Tom Spis [Halp]" : "Tom Spis",
+    #    "Tom Spis [Halp]" : "Tom Spis",
         "Hood he/him/his" : "Hood (he/him/his)",
         "Joel he/him/his" : "Joel (he/him/his)",
         "Ralf he/him/his" : "Ralf (he/him/his)",
         "Wenyu Gu Fish" : "Wenyu Gu (Fish)" 
         }
 
-    if input_data["display_or_real_name"] in edge_case_name_remap:
-        input_data["display_or_real_name"] = \
-            edge_case_name_remap[input_data["display_or_real_name"]]
+    if slack_name in edge_case_name_remap:
+        slack_name = edge_case_name_remap[slack_name]
     
     # TODO: Replace weird reverse allowlist method above with simply stripping 
     # problem characters from Slack display/real names like Freshservice does.     
@@ -92,11 +118,9 @@ def lookup_email_from_slack(input_data):
         # Using '_normalized' variants for better compat with non-ASCII chars.
         
         for user in members_list:
-                if input_data["display_or_real_name"] \
-                    in user["profile"]["display_name_normalized"]:
+                if slack_name in user["profile"]["display_name_normalized"]:
                     return user["profile"]["email"]
-                elif input_data["display_or_real_name"] \
-                    in user["profile"]["real_name_normalized"]:
+                elif slack_name in user["profile"]["real_name_normalized"]:
                     return user["profile"]["email"]
     
         # Parse pagination cursor & handle end-of-list / non-paginated results,
@@ -155,7 +179,7 @@ def get_requester(email):
 
 def merge_requesters(existing_requester_id, new_requester_id):
     """
-    Merge new Freshservice requester profile into existing one using API  
+    Merge new Freshservice requester profile into existing one via API  
    
     Args:
         existing_requester_id (int): requester's Freshservice profile ID
@@ -208,6 +232,49 @@ def update_email(existing_requester_id, email_type, email_to_update):
             raise
 
     return updated_requester_parsed
+
+
+def update_ticket(new_first_name, new_last_name, 
+                  existing_first_name, existing_last_name, 
+                  ticket_id):
+    """
+    Update Freshservice ticket with original Halp requester name via API  
+   
+    Args:
+        new_first_name (str): new (temp) Freshservice requester first name
+        new_last_name (str): new (temp) Freshservice requester last name
+        existing_first_name (str): existing Freshservice requester first name
+        existing_last_name (str): existing Freshservice requester last name
+        ticket_id (str): ticket ID string with INC- or SR- prefix
+
+    Returns:
+        updated_ticket (dict): Updated ticket
+    """
+
+    if ((new_first_name is not existing_first_name) or 
+        (new_last_name is not existing_last_name)):
+        
+        ticket_id = re.findall(r"\d+$", ticket_id)
+        halp_requester_name = f"{new_first_name} " \
+                              f"{new_last_name if new_last_name else ''}"
+
+        try:
+            updated_ticket = requests.put(
+                f"{TICKETS_URL}/{ticket_id[0]}", 
+                auth=(input_data["FRESHSERVICE_API_KEY"],""), 
+                json={"custom_fields":{"halp_requester":halp_requester_name}})
+            updated_ticket_parsed = updated_ticket.json()
+        except:
+            print("Updating ticket failed!\n")
+            raise
+
+    return updated_ticket_parsed
+
+# TODO: DONE!
+# Compare new_requester["first_name"] with existing_requester["first_name"]
+# and new_requester["last_name"] with existing_requester["last_name"], and if 
+# not matching, write ({new_requester["first_name"]} {new_requester["last_name"]})
+# to ticket["custom_fields"]["halp_requester"]
 
 
 slack_email = lookup_email_from_slack(input_data)
@@ -280,3 +347,13 @@ updated_requester = update_email(merged_requester["id"],
                                  email_type, email_to_update)
 if DEBUG is True:
     print(f"updated_requester\n{updated_requester}\n")
+
+if not IS_REPLY:
+    updated_ticket = update_ticket(new_requester["first_name"],
+                                new_requester["last_name"],
+                                existing_requester["first_name"],
+                                existing_requester["last_name"],
+                                input_data["TICKET_ID"])
+
+    if DEBUG is True:
+        print(f"updated_ticket\n{updated_ticket}\n")
