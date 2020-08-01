@@ -43,56 +43,48 @@ def lookup_email_from_slack(current_first_name, current_last_name):
 
     slack_name = f"{current_first_name}" \
                  f"{' ' + current_last_name if current_last_name else ''}"
-    
-    # Restore Freshservice-ommitted parentheses to Slack display names 
-    # which originally contained them (edge case processing)
 
-    edge_case_name_remap = {
-    #    "Tom Spis [Halp]" : "Tom Spis",
-        "Hood he/him/his" : "Hood (he/him/his)",
-        "Joel he/him/his" : "Joel (he/him/his)",
-        "Ralf he/him/his" : "Ralf (he/him/his)",
-        "Wenyu Gu Fish" : "Wenyu Gu (Fish)" 
-        }
-
-    if slack_name in edge_case_name_remap:
-        slack_name = edge_case_name_remap[slack_name]
-    
-    # TODO: Replace weird reverse allowlist method above with simply stripping 
-    # problem characters from Slack display/real names like Freshservice does.     
-
-    # Initialize next_cursor for Slack user.list pagination
-
-    next_cursor = "Initial"
+    next_cursor = "Initial" # Init next_cursor for Slack user.list pagination
     
     # Get & parse Slack's user.list (user list for entire Slack workspace). 
-    # Receives a default of 1000 users/page (cursor-based pagination).
-    # Not using official Python Slack SDK for compatability with Zapier.
+    # Receives a default of 1000 users/page (cursor-based pagination). Using 
+    # requests lib instead of official Python Slack SDK for compat with Zapier.
 
     while True:
         if next_cursor == "Initial":
             users_list = requests.get(
                 "https://slack.com/api/users.list", 
-                params={"token":input_data["SLACK_HALP_TOKEN"]}
-                )
+                params={"token":input_data["SLACK_HALP_TOKEN"]})
         else:
             users_list = requests.get(
                 "https://slack.com/api/users.list", 
                 params={"token":input_data["SLACK_HALP_TOKEN"], 
-                "cursor":next_cursor}
-                )
+                "cursor":next_cursor})
         
         members_list = users_list.json()["members"]
 
-        # Search for matching display_name, and if not found, real_name - 
-        # then return associated email address as soon as a match is found. 
-        # Using '_normalized' variants for better compat with non-ASCII chars.
-        
+        # Scan Slack user list page and search for matching display_name (after 
+        # stripping parentheses, as Freshservice does automatically). If found, 
+        # return associated email address early. If no match found, repeat strip 
+        # & search for real_name, then return email address if found. Using 
+        # ordered early returns in a single for-loop to balance readibility with
+        # perf. Using '_normalized' variant for better compat w/non-ASCII chars. 
+
         for user in members_list:
-                if slack_name in user["profile"]["display_name_normalized"]:
-                    return user["profile"]["email"]
-                elif slack_name in user["profile"]["real_name_normalized"]:
-                    return user["profile"]["email"]
+            if "(" or ")" in user["profile"]["display_name_normalized"]:
+                user["profile"]["display_name_normalized"] = \
+                user["profile"]["display_name_normalized"].replace("(","")
+                user["profile"]["display_name_normalized"] = \
+                user["profile"]["display_name_normalized"].replace(")","")
+            if slack_name in user["profile"]["display_name_normalized"]:
+                return user["profile"]["email"]
+            if "(" or ")" in user["profile"]["real_name_normalized"]:
+                user["profile"]["real_name_normalized"] = \
+                user["profile"]["real_name_normalized"].replace("(","")
+                user["profile"]["real_name_normalized"] = \
+                user["profile"]["real_name_normalized"].replace(")","")
+            if slack_name in user["profile"]["real_name_normalized"]:
+                return user["profile"]["email"]
     
         # Parse pagination cursor & handle end-of-list / non-paginated results,
         # as well as raise an exception if no match is found. Raising TypeError
@@ -104,7 +96,7 @@ def lookup_email_from_slack(current_first_name, current_last_name):
                 raise TypeError("\n\nUnable to find a matching Slack "
                                 "display or real name!\n")
         except:
-            if not TypeError:
+            if not TypeError: # Handles KeyError from single-page .json() result
                 print("\nUnable to find a matching Slack "
                       "display or real name!\n")
             raise
@@ -226,7 +218,7 @@ if DEBUG is True:
 
 if existing_requester is None:
     tokenized_email = re.search(r"^(?P<username>[^@]+)@(?P<domain>.*)"
-                                  "\.(?P<tld>\w{2,10})$",slack_email)
+                                  "\.(?P<tld>\w+)$",slack_email)
     halp_domain_tld_email = f"{tokenized_email.group('username')}" \
                              "@halp" \
                             f".{tokenized_email.group('domain')}" \
