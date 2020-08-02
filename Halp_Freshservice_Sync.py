@@ -1,3 +1,10 @@
+################################################################################
+#
+# Halp Freshservice Sync Helper 
+#
+# NOTE: Print logging is used instead of logging lib for Zapier compatibility.
+# NOTE: Debug logging via print() as Zapier does not integrate logging lib output
+
 import os   # Only used when local testing for getting secrets via os.getenv()
 import re
 import requests
@@ -13,6 +20,10 @@ except NameError:
         "FRESHSERVICE_API_KEY" : os.getenv("FRESHSERVICE_API_KEY"),
         "SLACK_HALP_TOKEN" : os.getenv("SLACK_HALP_TOKEN"),
     }
+    IS_ZAPIER = False
+else:
+    IS_ZAPIER = True
+
 
 # Initialize constants
 
@@ -20,8 +31,8 @@ HALP_EMAIL = "top-hat@inbound.halp-mail.com"   # Set to your Halp inbound email
 FRESHSERVICE_HOSTNAME = "tophat.freshservice.com"   # Set to your Freshservice
 REQUESTERS_URL = "https://" + FRESHSERVICE_HOSTNAME + "/api/v2/requesters"
 FRESHSERVICE_AGENT_REQUESTER_EMAIL = "tom.spis@halp.tophatmonocle.com"
-DEBUG = True   # Enables debug logging via print()
-DEBUG_DEEP = True   # Enables deeper debug logging in get_requesters()
+DEBUG = True   # Enables/disables debug logging
+DEBUG_DEEP = False   # Enables/disables deeper debug logging in get_requesters()
 
 # Function definitions
 
@@ -77,14 +88,16 @@ def lookup_email_from_slack(current_first_name, current_last_name):
                 user["profile"]["display_name_normalized"] = \
                 user["profile"]["display_name_normalized"].replace(")","")
             if slack_name in user["profile"]["display_name_normalized"]:
-                return user["profile"]["email"]
+                return user["profile"]["email"].replace("tophat.com", 
+                                                        "tophatmonocle.com")
             if "(" or ")" in user["profile"]["real_name_normalized"]:
                 user["profile"]["real_name_normalized"] = \
                 user["profile"]["real_name_normalized"].replace("(","")
                 user["profile"]["real_name_normalized"] = \
                 user["profile"]["real_name_normalized"].replace(")","")
             if slack_name in user["profile"]["real_name_normalized"]:
-                return user["profile"]["email"]
+                return user["profile"]["email"].replace("tophat.com", 
+                                                        "tophatmonocle.com")
     
         # Parse pagination cursor & handle end-of-list / non-paginated results,
         # as well as raise an exception if no match is found. Raising TypeError
@@ -123,15 +136,17 @@ def get_requester(email):
                                  auth=(input_data["FRESHSERVICE_API_KEY"],""), 
                                  params={"email":email})
         requester_parsed = requester.json()["requesters"]
-        if DEBUG_DEEP:
-            print(f"requester.json():\n{requester.json()}\n")
-            print(f"requester_parsed:\n{requester_parsed}\n")
+        # If running in Zapier, ignore DEBUG_DEEP, otherwise ALL logging will be 
+        # disabled in the app, as Zapier does not like print() within functions
+        if DEBUG_DEEP and not IS_ZAPIER: 
+                print(f"requester.json():\n{requester.json()}\n")
+                print(f"requester_parsed:\n{requester_parsed}\n")
     except KeyError:
         print(f"Provided requester email address ({email}) "
               f"is not in a valid email address format!\n")
         raise
 
-    if requester_parsed and requester_parsed is not None:
+    if requester_parsed:
         return requester_parsed[0]
     else:
         if email is HALP_EMAIL:
@@ -196,9 +211,10 @@ def update_email(existing_requester_id, email_type, email_to_update):
 
     return updated_requester_parsed
 
-
+if DEBUG:
+    print("")
 current_requester = get_requester(HALP_EMAIL)
-if DEBUG is True:
+if DEBUG:
     print(f"current_requester\n{current_requester}\n")
 
 if current_requester["first_name"] != HALP_EMAIL:
@@ -206,14 +222,11 @@ if current_requester["first_name"] != HALP_EMAIL:
                                           current_requester["last_name"])
 else:
     slack_email = FRESHSERVICE_AGENT_REQUESTER_EMAIL
-
-if "tophat.com" in slack_email:
-    slack_email = slack_email.replace("tophat.com", "tophatmonocle.com")
-if DEBUG is True:
-    print(f"\nslack_email: {slack_email}\n")
+if DEBUG:
+    print(f"slack_email: {slack_email}\n")
 
 existing_requester = get_requester(slack_email)
-if DEBUG is True:
+if DEBUG:
     print(f"existing_requester\n{existing_requester}\n")
 
 if existing_requester is None:
@@ -225,7 +238,7 @@ if existing_requester is None:
                             f".{tokenized_email.group('tld')}"
 
     existing_requester = get_requester(halp_domain_tld_email)
-    if DEBUG is True:
+    if DEBUG:
         print(f"existing_requester\n{existing_requester}\n")
 
     if existing_requester is None:
@@ -245,7 +258,7 @@ if requester_exists:
     if current_requester["id"] != existing_requester["id"]:
         merged_requester = merge_requesters(existing_requester["id"], 
                                             current_requester["id"])
-        if DEBUG is True:
+        if DEBUG:
             print(f"merged_requester\n{merged_requester}\n")
     elif HALP_EMAIL in current_requester["secondary_emails"]:
         merged_requester = {
@@ -269,5 +282,5 @@ if requester_exists:
 
 updated_requester = update_email(merged_requester["id"], 
                                  email_type, email_to_update)
-if DEBUG is True:
+if DEBUG:
     print(f"updated_requester\n{updated_requester}\n")
