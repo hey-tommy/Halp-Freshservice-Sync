@@ -1,29 +1,37 @@
-################################################################################
+"""
 #
 # Halp Freshservice Sync Helper 
 #
-# NOTE: Print logging is used instead of logging lib for Zapier compatibility.
-# NOTE: Debug logging via print() as Zapier does not integrate logging lib output
+"""
+
+# NOTE: Debug logging via print() as Zapier doesn't integrate logging lib output
+
+# NOTE: TypeError is raised "off-label" in several spots, as it's one of the few 
+#       exception types that logs a traceback in Zapier (unlike ValueError)
 
 import os   # Only used when local testing for getting secrets via os.getenv()
 import re
 import requests
 
-# Initialize input_data dictionary for local testing. When using in Zapier, it 
-# will pass input_data explicitly, and initialization will be ignored. For local
-# testing, be sure to set local envir variables to Freshservice & Slack secrets. 
+# Initialize secrets when run locally. When using in Zapier, it will explicitly 
+# pass input_data, and ignore the initialization below. Otherwise, read secrets 
+# from local env variables, and if those are not found, throw an exception. 
 
 try:
     input_data
 except NameError:
-    input_data = {
-        "FRESHSERVICE_API_KEY" : os.getenv("FRESHSERVICE_API_KEY"),
-        "SLACK_HALP_TOKEN" : os.getenv("SLACK_HALP_TOKEN"),
-    }
+    try:
+        input_data = {
+            "FRESHSERVICE_API_KEY" : os.environ["FRESHSERVICE_API_KEY"],
+            "SLACK_HALP_TOKEN" : os.environ["SLACK_HALP_TOKEN"],
+        }
+    except KeyError:
+        print("\nYou must configure Freshservice & Slack secrets as "
+              "environment variables when testing locally!\n")
+        raise
     IS_ZAPIER = False
 else:
     IS_ZAPIER = True
-
 
 # Initialize constants
 
@@ -55,7 +63,7 @@ def lookup_email_from_slack(current_first_name, current_last_name):
     slack_name = f"{current_first_name}" \
                  f"{' ' + current_last_name if current_last_name else ''}"
 
-    next_cursor = "Initial" # Init next_cursor for Slack user.list pagination
+    next_cursor = "Initial"   # Init next_cursor for Slack user.list pagination
     
     # Get & parse Slack's user.list (user list for entire Slack workspace). 
     # Receives a default of 1000 users/page (cursor-based pagination). Using 
@@ -100,8 +108,7 @@ def lookup_email_from_slack(current_first_name, current_last_name):
                                                         "tophatmonocle.com")
     
         # Parse pagination cursor & handle end-of-list / non-paginated results,
-        # as well as raise an exception if no match is found. Raising TypeError
-        # off-label, as it's one of the few types that log errors in Zapier.   
+        # as well as raise an exception if no match is found. 
 
         try:
             next_cursor = users_list.json()["response_metadata"]["next_cursor"]
@@ -146,12 +153,17 @@ def get_requester(email):
               f"is not in a valid email address format!\n")
         raise
 
+    # Return parsed requester dict (requester lookups always return a list of 
+    # dicts, even though email-based lookups only return a single object - hence 
+    # the 0 index). If no email found, return 'None' or raise an exception.
+
     if requester_parsed:
         return requester_parsed[0]
     else:
         if email is HALP_EMAIL:
-            raise ValueError(f"\n\nRequester profile for {HALP_EMAIL} "
-                             f"does not exist!\n")
+            raise TypeError(f"\n\nRequester profile for {HALP_EMAIL} does not "
+                             "exist! Try sending a reply or creating a new "
+                             "ticket in Halp.\n")
         return
 
 
@@ -183,14 +195,14 @@ def merge_requesters(existing_requester_id, current_requester_id):
     return merged_requester_parsed
 
 
-def update_email(existing_requester_id, email_type, email_to_update):
+def update_secondary_emails(existing_requester_id, email_type, secondary_emails):  # Must rename back away from secondary_emails, as it also updated primary if no requester
     """
     Update secondary emails in a Freshservice requester profile via API  
    
     Args:
         existing_requester_id (int): requester's Freshservice profile ID
         email_type (str): 
-        email_to_update (str/list of str): list of secondary emails to set
+        secondary_emails (str/list of str): list of secondary emails to set
 
     Returns:
         updated_requester_parsed (dict): Updated, parsed requester profile
@@ -200,7 +212,7 @@ def update_email(existing_requester_id, email_type, email_to_update):
         updated_requester = requests.put(
             f"{REQUESTERS_URL}/{existing_requester_id}", 
             auth=(input_data["FRESHSERVICE_API_KEY"],""), 
-            json={email_type:email_to_update}
+            json={email_type:secondary_emails}
             )
         updated_requester_parsed = updated_requester.json()["requester"]
     except:
@@ -211,11 +223,21 @@ def update_email(existing_requester_id, email_type, email_to_update):
 
     return updated_requester_parsed
 
-if DEBUG:
+
+# Get current requester info
+
+if DEBUG:   # Pad debug output with a blank line for clarity
     print("")
 current_requester = get_requester(HALP_EMAIL)
 if DEBUG:
     print(f"current_requester\n{current_requester}\n")
+
+# Lookup current requester email address from Slack. If requester doesn't have 
+# a name (which happens for close ticket notifications), associate with email of
+# Freshservice agent-requester (a previously created requester profile for an 
+# agent, named "{FirstName} {LastName} [Halp]" and having an email address of
+# first.last@halp.domain.com, since Freshservice doesn't allow merging profiles 
+# into an agent profile.
 
 if current_requester["first_name"] != HALP_EMAIL:
     slack_email = lookup_email_from_slack(current_requester["first_name"],
@@ -225,13 +247,17 @@ else:
 if DEBUG:
     print(f"slack_email: {slack_email}\n")
 
+# Get existing requester info via Slack email if requester profile exists
+
 existing_requester = get_requester(slack_email)
 if DEBUG:
     print(f"existing_requester\n{existing_requester}\n")
 
+# If Slack user doesn't have a corresponding Freshservice requester profile,
+
 if existing_requester is None:
     tokenized_email = re.search(r"^(?P<username>[^@]+)@(?P<domain>.*)"
-                                  "\.(?P<tld>\w+)$",slack_email)
+                                r"\.(?P<tld>\w+)$",slack_email)
     halp_domain_tld_email = f"{tokenized_email.group('username')}" \
                              "@halp" \
                             f".{tokenized_email.group('domain')}" \
@@ -248,10 +274,10 @@ if existing_requester is None:
     else:
         requester_exists = True
 
-    email_to_update = halp_domain_tld_email
+    secondary_emails = halp_domain_tld_email
 
 else:
-    email_to_update = slack_email
+    secondary_emails = slack_email
     requester_exists = True
 
 if requester_exists:
@@ -269,18 +295,18 @@ if requester_exists:
     merged_requester["secondary_emails"].remove(HALP_EMAIL)
 
     if not merged_requester["secondary_emails"]:
-        if "tophatmonocle.com" in email_to_update:
-            email_to_update = [email_to_update.replace("tophatmonocle.com", 
-                                                       "tophat.com")]
-        elif "bluedoorpublishing.com" in email_to_update:
-            email_to_update = [email_to_update.replace("bluedoorpublishing.com", 
-                                                       "bluedoorcloud.com")]     
+        if "tophatmonocle.com" in secondary_emails:
+            secondary_emails = [secondary_emails.replace("tophatmonocle.com", 
+                                                         "tophat.com")]
+        elif "bluedoorpublishing.com" in secondary_emails:
+            secondary_emails = [secondary_emails.replace("bluedoorpublishing.com", 
+                                                         "bluedoorcloud.com")]     
     else:
-        email_to_update = merged_requester["secondary_emails"]
+        secondary_emails = merged_requester["secondary_emails"]
 
     email_type = "secondary_emails"
 
-updated_requester = update_email(merged_requester["id"], 
-                                 email_type, email_to_update)
+cleaned_requester = update_secondary_emails(merged_requester["id"], email_type, 
+                                            secondary_emails)
 if DEBUG:
-    print(f"updated_requester\n{updated_requester}\n")
+    print(f"updated_requester\n{cleaned_requester}\n")
