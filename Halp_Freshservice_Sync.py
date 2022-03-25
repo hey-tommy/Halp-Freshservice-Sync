@@ -35,11 +35,11 @@ else:
 
 # Initialize constants
 
-HALP_EMAIL = "top-hat@inbound.halp-mail.com"   # Set to your Halp inbound email 
-FRESHSERVICE_HOSTNAME = "tophat.freshservice.com"   # Set to your Freshservice
+HALP_EMAIL = "yourhalpemail@inbound.halp-mail.com"   # Set to your Halp inbound email 
+FRESHSERVICE_HOSTNAME = "yourfreshservice.freshservice.com"   # Set to your Freshservice
 REQUESTERS_URL = "https://" + FRESHSERVICE_HOSTNAME + "/api/v2/requesters"
-FRESHSERVICE_AGENT_REQUESTER_EMAIL = "tom.spis@halp.tophatmonocle.com"
-DEBUG = True   # Enables/disables debug logging
+FRESHSERVICE_AGENT_REQUESTER_EMAIL = "your.requester.email@company.com" 
+DEBUG = False   # Enables/disables debug logging
 DEBUG_DEEP = False   # Enables/disables deeper debug logging in get_requesters()
 
 # Function definitions
